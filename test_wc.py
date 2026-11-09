@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from wc import count
+from wc import count, top_words
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WC_PY = os.path.join(HERE, "wc.py")
@@ -90,6 +90,83 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(ours, theirs)
                 ours_stdin = run([], stdin=data).stdout.decode().split()
                 self.assertEqual(ours_stdin, theirs[:3])
+
+
+class TopWordsTests(unittest.TestCase):
+    def test_orders_by_count_then_alphabetically(self):
+        data = b"b a c b a b d\n"
+        self.assertEqual(top_words(data, 3), [("b", 3), ("a", 2), ("c", 1)])
+
+    def test_case_insensitive(self):
+        self.assertEqual(top_words(b"The the THE cat\n", 2), [("the", 3), ("cat", 1)])
+
+    def test_n_larger_than_distinct_words(self):
+        self.assertEqual(top_words(b"x y x", 10), [("x", 2), ("y", 1)])
+
+    def test_empty_input(self):
+        self.assertEqual(top_words(b"", 3), [])
+
+    def test_utf8_words(self):
+        self.assertEqual(top_words("Wörld wörld\n".encode("utf-8"), 1), [("wörld", 2)])
+
+
+class TopCliTests(unittest.TestCase):
+    TEXT = b"the cat and the dog\nThe Dog ran\nzebra apple\n"
+    EXPECTED = "3 the\n2 dog\n1 and\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "input.txt")
+        with open(self.path, "wb") as f:
+            f.write(self.TEXT)
+
+    def test_top_file(self):
+        result = run(["--top", "3", self.path])
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.decode(), self.EXPECTED)
+        self.assertEqual(result.stderr, b"")
+
+    def test_top_option_after_file_and_equals_form(self):
+        self.assertEqual(run([self.path, "--top=3"]).stdout.decode(), self.EXPECTED)
+
+    def test_top_stdin(self):
+        result = run(["--top", "3"], stdin=self.TEXT)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.decode(), self.EXPECTED)
+
+    def test_top_missing_file(self):
+        missing = os.path.join(self.tmp.name, "nope.txt")
+        result = run(["--top", "2", missing])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(missing, result.stderr.decode())
+
+    def test_bad_top_values_are_usage_errors(self):
+        for args in (["--top"], ["--top", "0"], ["--top", "-1"], ["--top", "x"],
+                     ["--top", "1", "--top", "2"], ["--top", "1", "a", "b"]):
+            with self.subTest(args):
+                result = run(args)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, b"")
+                self.assertTrue(result.stderr.startswith(b"usage:"))
+
+
+class LegacyArgumentTests(unittest.TestCase):
+    def test_two_files_keep_original_usage(self):
+        result = run(["a", "b"])
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr.decode(), "usage: python wc.py [FILE]\n")
+
+    def test_dash_prefixed_filename_is_still_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "-x"), "wb") as f:
+                f.write(b"a b\n")
+            result = subprocess.run(
+                [sys.executable, WC_PY, "-x"], cwd=tmp, capture_output=True
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.decode(), "1 2 4 -x\n")
 
 
 if __name__ == "__main__":
