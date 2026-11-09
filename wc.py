@@ -5,8 +5,11 @@ Usage:
     python wc.py        reads standard input and prints "LINES WORDS CHARS"
     python wc.py --top N [FILE]
                         prints the N most frequent words as "COUNT WORD" lines
+    python wc.py --json [--top N] [FILE]
+                        prints counts and optional top words as one JSON object
 """
 
+import json
 import sys
 
 
@@ -39,17 +42,18 @@ def top_words(data, n):
     return ranked[:n]
 
 
-OPTIONS_USAGE = "usage: python wc.py [--top N] [FILE]"
+OPTIONS_USAGE = "usage: python wc.py [--top N] [--json] [FILE]"
 
 
 def _uses_options(args):
-    return any(a == "--top" or a.startswith("--top=") for a in args)
+    return any(a in ("--top", "--json") or a.startswith("--top=") for a in args)
 
 
 def _parse_options(args):
-    """Parse [--top N | --top=N] [FILE]; return (top, path) or None if invalid."""
+    """Return (top, path, as_json) for option arguments, or None if invalid."""
     top = None
     path = None
+    as_json = False
     i = 0
     while i < len(args):
         arg = args[i]
@@ -69,12 +73,14 @@ def _parse_options(args):
                 return None
             if top < 1:
                 return None
+        elif arg == "--json":
+            as_json = True
         elif path is None:
             path = arg
         else:
             return None
         i += 1
-    return top, path
+    return top, path, as_json
 
 
 def _read(path):
@@ -94,12 +100,19 @@ def _main_with_options(args):
     if parsed is None:
         print(OPTIONS_USAGE, file=sys.stderr)
         return 2
-    top, path = parsed
+    top, path, as_json = parsed
     data, status = _read(path)
     if status is not None:
         return status
-    for word, n in top_words(data, top):
-        print(n, word)
+    if as_json:
+        lines, words, chars = count(data)
+        result = {"lines": lines, "words": words, "chars": chars, "file": path}
+        if top is not None:
+            result["top"] = top_words(data, top)
+        print(json.dumps(result))
+    else:
+        for word, n in top_words(data, top):
+            print(n, word)
     return 0
 
 
